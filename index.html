@@ -1,0 +1,457 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Action Center</title>
+    <meta name="theme-color" content="#0078d4">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="default">
+    <meta name="apple-mobile-web-app-title" content="Action">
+    <link rel="apple-touch-icon" href="/icon-192.png">
+    <link rel="manifest" href="/manifest.json">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Segoe UI', -apple-system, sans-serif; background: #f5f5f5; color: #333; padding: 20px; max-width: 1400px; margin: 0 auto; }
+        .header { background: white; padding: 20px 25px; border-radius: 12px; margin-bottom: 20px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; }
+        .header h1 { font-size: 1.5em; font-weight: 600; }
+        .header .meta { color: #666; font-size: 0.9em; }
+        .refresh-btn { background: #0078d4; color: white; border: none; padding: 10px 20px; border-radius: 8px; font-size: 0.9em; font-weight: 500; cursor: pointer; display: flex; align-items: center; gap: 8px; transition: background 0.2s; }
+        .refresh-btn:hover { background: #106ebe; }
+        .refresh-btn:disabled { background: #ccc; cursor: not-allowed; }
+        .refresh-btn .spinner { width: 16px; height: 16px; border: 2px solid rgba(255,255,255,0.3); border-top-color: white; border-radius: 50%; animation: spin 1s linear infinite; display: none; }
+        .refresh-btn.loading .spinner { display: block; }
+        .refresh-btn.loading .icon { display: none; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        /* Tab Styles */
+        .tabs { display: flex; gap: 0; margin-bottom: 20px; background: white; border-radius: 12px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+        .tab { flex: 1; padding: 16px 24px; text-align: center; font-weight: 600; font-size: 0.95em; cursor: pointer; border: none; background: white; color: #666; transition: all 0.2s; border-bottom: 3px solid transparent; }
+        .tab:hover { background: #f8f8f8; color: #333; }
+        .tab.active { color: #0078d4; border-bottom-color: #0078d4; background: #f0f7ff; }
+        .tab-content { display: none; }
+        .tab-content.active { display: block; }
+
+        .stats { display: flex; gap: 15px; margin-bottom: 20px; flex-wrap: wrap; }
+        .stat { background: white; padding: 15px 20px; border-radius: 10px; flex: 1; min-width: 100px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+        .stat .num { font-size: 2em; font-weight: 700; }
+        .stat .label { color: #666; font-size: 0.85em; }
+        .stat.email .num { color: #0078d4; }
+        .stat.teams .num { color: #6264a7; }
+        .stat.calendar .num { color: #28a745; }
+        .grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 20px; }
+        @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
+        .card { background: white; border-radius: 12px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); overflow: hidden; margin-bottom: 20px; }
+        .card-header { padding: 15px 20px; font-weight: 600; font-size: 0.95em; display: flex; justify-content: space-between; align-items: center; }
+        .card-header .count { background: #eee; padding: 2px 10px; border-radius: 20px; font-size: 0.85em; font-weight: 500; }
+        .email-card .card-header { background: #e8f4fd; color: #0078d4; }
+        .teams-card .card-header { background: #eeeef8; color: #6264a7; }
+        .calendar-card .card-header { background: #e6f4ea; color: #1e7e34; }
+        .standup-card .card-header { background: #fff3e0; color: #e65100; }
+        .personal-card .card-header { background: #f3e5f5; color: #7b1fa2; }
+        .card-body { padding: 10px 0; max-height: 400px; overflow-y: auto; }
+        .item { padding: 12px 20px; border-bottom: 1px solid #f0f0f0; transition: background 0.15s; }
+        .item:last-child { border-bottom: none; }
+        .item:hover { background: #fafafa; }
+        .item a { color: #333; text-decoration: none; font-weight: 500; }
+        .item a:hover { color: #0078d4; }
+        .item .sub { color: #666; font-size: 0.85em; margin-top: 4px; }
+        .item .from { color: #0078d4; font-weight: 500; }
+        .item .time { color: #999; font-size: 0.8em; }
+        .item.unread { background: #fffbeb; border-left: 3px solid #f59e0b; }
+        .section-label { padding: 8px 20px; font-size: 0.75em; text-transform: uppercase; letter-spacing: 0.5px; color: #888; background: #fafafa; }
+        .empty-state { padding: 30px 20px; text-align: center; color: #999; }
+        .footer { text-align: center; padding: 20px; color: #999; font-size: 0.85em; }
+        .footer a { color: #0078d4; text-decoration: none; }
+        .error-banner { background: #fee2e2; color: #991b1b; padding: 12px 20px; border-radius: 8px; margin-bottom: 20px; display: none; }
+        .error-banner.show { display: block; }
+
+        /* Standup Styles */
+        .standup-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0; }
+        @media (max-width: 700px) { .standup-grid { grid-template-columns: 1fr; } }
+        .standup-col { padding: 15px 20px; }
+        .standup-col:first-child { border-right: 1px solid #f0f0f0; }
+        @media (max-width: 700px) { .standup-col:first-child { border-right: none; border-bottom: 1px solid #f0f0f0; } }
+        .standup-col h3 { font-size: 0.85em; color: #666; margin-bottom: 12px; text-transform: uppercase; letter-spacing: 0.5px; }
+        .standup-list { list-style: none; }
+        .standup-list li { padding: 8px 0; padding-left: 20px; position: relative; font-size: 0.9em; line-height: 1.4; border-bottom: 1px solid #f8f8f8; }
+        .standup-list li:last-child { border-bottom: none; }
+        .standup-list li::before { content: ''; position: absolute; left: 0; color: #e65100; font-weight: bold; }
+        .standup-list li .meta { color: #999; font-size: 0.8em; display: block; margin-top: 2px; }
+        .standup-input-row { display: flex; gap: 8px; margin-top: 10px; }
+        .standup-input { flex: 1; padding: 10px 12px; border: 1px solid #ddd; border-radius: 6px; font-size: 0.9em; font-family: inherit; }
+        .standup-input:focus { outline: none; border-color: #e65100; }
+        .add-btn { background: #e65100; color: white; border: none; padding: 10px 16px; border-radius: 6px; font-size: 0.85em; font-weight: 500; cursor: pointer; }
+        .add-btn:hover { background: #bf360c; }
+        .standup-list li.editable { cursor: pointer; }
+        .standup-list li.editable:hover { background: #fff8f0; margin: 0 -20px; padding-left: 40px; padding-right: 20px; }
+        .standup-list li .delete-btn { position: absolute; right: 0; top: 50%; transform: translateY(-50%); background: none; border: none; color: #ccc; cursor: pointer; font-size: 1.1em; padding: 5px; display: none; }
+        .standup-list li:hover .delete-btn { display: block; }
+        .standup-list li .delete-btn:hover { color: #e53935; }
+
+        /* Personal Tab Styles */
+        .quick-links { display: flex; gap: 15px; margin-bottom: 20px; flex-wrap: wrap; }
+        .quick-link { background: white; padding: 20px 25px; border-radius: 12px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); text-decoration: none; color: #333; display: flex; align-items: center; gap: 12px; transition: all 0.2s; }
+        .quick-link:hover { box-shadow: 0 4px 12px rgba(0,0,0,0.15); transform: translateY(-2px); }
+        .quick-link .icon { font-size: 1.5em; }
+        .quick-link .label { font-weight: 600; }
+
+        /* Resolutions Styles */
+        .resolutions { background: white; border-radius: 12px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); padding: 25px 30px; }
+        .resolutions h2 { font-size: 1.3em; margin-bottom: 5px; color: #7b1fa2; }
+        .resolutions .subtitle { color: #666; font-size: 0.9em; margin-bottom: 25px; }
+        .resolutions .theme { background: linear-gradient(135deg, #f3e5f5, #e1bee7); padding: 15px 20px; border-radius: 10px; margin-bottom: 25px; text-align: center; }
+        .resolutions .theme-label { font-size: 0.8em; text-transform: uppercase; letter-spacing: 1px; color: #7b1fa2; margin-bottom: 5px; }
+        .resolutions .theme-text { font-size: 1.2em; font-weight: 600; color: #4a148c; }
+        .resolution-section { margin-bottom: 25px; padding-bottom: 20px; border-bottom: 1px solid #f0f0f0; }
+        .resolution-section:last-child { margin-bottom: 0; padding-bottom: 0; border-bottom: none; }
+        .resolution-section .number { display: inline-block; width: 28px; height: 28px; background: #7b1fa2; color: white; border-radius: 50%; text-align: center; line-height: 28px; font-size: 0.85em; font-weight: 600; margin-right: 10px; }
+        .resolution-section h3 { display: inline; font-size: 1em; color: #333; }
+        .resolution-section .category { color: #7b1fa2; font-size: 0.8em; font-weight: 500; margin-left: 10px; }
+        .resolution-section .statement { background: #fafafa; padding: 12px 15px; border-radius: 8px; margin: 12px 0; font-style: italic; color: #555; border-left: 3px solid #7b1fa2; }
+        .resolution-section .details { margin-top: 10px; }
+        .resolution-section .details p { margin: 8px 0; font-size: 0.9em; color: #666; }
+        .resolution-section .details strong { color: #333; }
+        .resolution-section .success { background: #e8f5e9; padding: 10px 15px; border-radius: 8px; margin-top: 10px; font-size: 0.85em; color: #2e7d32; }
+        .resolution-section .success::before { content: ''; margin-right: 8px; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <div>
+            <h1>Action Center</h1>
+            <div class="meta" id="lastUpdated">Loading...</div>
+        </div>
+        <button class="refresh-btn" onclick="refreshData()" id="refreshBtn">
+            <span class="spinner"></span>
+            <span class="icon">&#8635;</span>
+            Refresh
+        </button>
+    </div>
+    <div class="error-banner" id="errorBanner"></div>
+
+    <div class="tabs">
+        <button class="tab active" onclick="switchTab('work')">Work</button>
+        <button class="tab" onclick="switchTab('personal')">Personal</button>
+    </div>
+
+    <!-- WORK TAB -->
+    <div id="work-tab" class="tab-content active">
+        <div class="card standup-card">
+            <div class="card-header">Daily Standup<span class="count" id="standupDate">-</span></div>
+            <div class="standup-grid">
+                <div class="standup-col">
+                    <h3>Yesterday</h3>
+                    <ul class="standup-list" id="yesterdayList">
+                        <li>Loading...</li>
+                    </ul>
+                </div>
+                <div class="standup-col">
+                    <h3>Today</h3>
+                    <ul class="standup-list" id="todayList"></ul>
+                    <div class="standup-input-row">
+                        <input type="text" class="standup-input" id="todayInput" placeholder="Add a task for today..." onkeypress="if(event.key==='Enter')addTodayItem()">
+                        <button class="add-btn" onclick="addTodayItem()">Add</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="stats">
+            <div class="stat email"><div class="num" id="emailCount">-</div><div class="label">Emails</div></div>
+            <div class="stat teams"><div class="num" id="teamsCount">-</div><div class="label">Teams</div></div>
+            <div class="stat calendar"><div class="num" id="calendarCount">-</div><div class="label">Today</div></div>
+        </div>
+        <div class="card calendar-card">
+            <div class="card-header">Today's Calendar<span class="count" id="calendarDate">-</span></div>
+            <div class="card-body" id="calendarList"><div class="empty-state">Loading...</div></div>
+        </div>
+        <div class="grid">
+            <div class="card email-card">
+                <div class="card-header">Recent Emails<span class="count">Last 3 Days</span></div>
+                <div class="card-body" id="emailList"><div class="empty-state">Loading...</div></div>
+            </div>
+            <div class="card teams-card">
+                <div class="card-header">Teams Activity<span class="count">Today</span></div>
+                <div class="card-body" id="teamsList"><div class="empty-state">Loading...</div></div>
+            </div>
+        </div>
+        <div class="footer">
+            <a href="https://outlook.office365.com/mail/inbox" target="_blank">Outlook</a> &bull;
+            <a href="https://teams.microsoft.com" target="_blank">Teams</a> &bull;
+            <a href="https://app.clickup.com" target="_blank">ClickUp</a>
+        </div>
+    </div>
+
+    <!-- PERSONAL TAB -->
+    <div id="personal-tab" class="tab-content">
+        <div class="quick-links">
+            <a href="https://silverferngroup-my.sharepoint.com/:x:/g/personal/nathan_silverfern_com/IQDde8yfNLtcRJvPyQnPOiPbAdT4bmIp74uDYxRatkXnNys?e=nGtpG0" target="_blank" class="quick-link">
+                <span class="icon">&#128176;</span>
+                <span class="label">317 Larkwood Bills</span>
+            </a>
+        </div>
+
+        <div class="resolutions">
+            <h2>2026 Personal Operating Framework</h2>
+            <div class="subtitle">Name: Nathan</div>
+
+            <div class="theme">
+                <div class="theme-label">Year Theme</div>
+                <div class="theme-text">Closing open loops with integrity</div>
+            </div>
+
+            <div class="resolution-section">
+                <span class="number">1</span>
+                <h3>Core Orientation</h3>
+                <span class="category">Faith</span>
+                <div class="statement">Scripture is the primary lens through which I interpret my life.</div>
+                <div class="details">
+                    <p><strong>Expression:</strong> I am reading through the Bible chronologically-not to maintain streaks, but to form coherence.</p>
+                    <p><strong>Rule:</strong> Missing days does not mean falling behind. Returning matters more than pace.</p>
+                </div>
+                <div class="success">I am more biblically grounded, literate, and steady than I was last year.</div>
+            </div>
+
+            <div class="resolution-section">
+                <span class="number">2</span>
+                <h3>Proof Project</h3>
+                <span class="category">Physical Goal</span>
+                <div class="statement">I will reach sub-10% body fat at least once this year as a one-time proof of discipline and control.</div>
+                <div class="details">
+                    <p><strong>Frame:</strong> This is a project, not an identity.</p>
+                    <p><strong>Rule:</strong> Once achieved, I intentionally exit the extreme and retain the lessons.</p>
+                </div>
+                <div class="success">The proof is done, documented, and released.</div>
+            </div>
+
+            <div class="resolution-section">
+                <span class="number">3</span>
+                <h3>Decision Track</h3>
+                <span class="category">Career</span>
+                <div class="statement">By the end of 2026, I will have made a clear, informed decision about my long-term career direction.</div>
+                <div class="details">
+                    <p><strong>Options:</strong> Commit fully to Silver Fern, or pivot intentionally to something else.</p>
+                    <p><strong>Rule:</strong> Drift is not an option. Exploration is allowed only in service of a decision.</p>
+                </div>
+                <div class="success">I am no longer ambiguous about where I'm building.</div>
+            </div>
+
+            <div class="resolution-section">
+                <span class="number">4</span>
+                <h3>Quiet Systems</h3>
+                <span class="category">Money</span>
+                <div class="statement">My finances should run quietly in the background of my life.</div>
+                <div class="details">
+                    <p><strong>Approach:</strong> Loose guardrails over micromanagement.</p>
+                    <p><strong>Rules:</strong> No tracking every dollar. Regular awareness without obsession. Spending is calm, not anxious.</p>
+                </div>
+                <div class="success">Money is orderly, predictable, and mentally light.</div>
+            </div>
+
+            <div class="resolution-section">
+                <span class="number">5</span>
+                <h3>Relational Posture</h3>
+                <span class="category">Kloe</span>
+                <div class="statement">I will let relational truth unfold naturally, without pressure or manipulation.</div>
+                <div class="details">
+                    <p><strong>Posture:</strong> Honest, present, and consistent.</p>
+                    <p><strong>Rules:</strong> No forcing clarity. No hidden timelines. No emotional self-abandonment.</p>
+                </div>
+                <div class="success">Whether the outcome is together or apart, I am at peace and acted with integrity.</div>
+            </div>
+
+            <div class="resolution-section">
+                <span class="number">6</span>
+                <h3>Joy & Margin</h3>
+                <span class="category">Personal Life</span>
+                <div class="statement">I do not need to manufacture joy-I need to protect space for it.</div>
+                <div class="details">
+                    <p><strong>Rule:</strong> Do not over-optimize life.</p>
+                </div>
+                <div class="success">Life feels full, not crowded.</div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const DATA_URL = 'https://raw.githubusercontent.com/Nathanvans0221/action-center-data/main/data.json';
+        const TODAY_KEY = 'standupToday_' + new Date().toISOString().split('T')[0];
+
+        function switchTab(tabName) {
+            document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+            document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+            document.querySelector(`.tab:nth-child(${tabName === 'work' ? 1 : 2})`).classList.add('active');
+            document.getElementById(tabName + '-tab').classList.add('active');
+            localStorage.setItem('activeTab', tabName);
+        }
+
+        document.addEventListener('DOMContentLoaded', () => {
+            const savedTab = localStorage.getItem('activeTab');
+            if (savedTab) switchTab(savedTab);
+
+            const cached = localStorage.getItem('actionCenterData');
+            if (cached) {
+                try { renderData(JSON.parse(cached)); } catch(e) {}
+            }
+            loadTodayItems();
+            refreshData();
+        });
+
+        async function refreshData() {
+            const btn = document.getElementById('refreshBtn');
+            const errorBanner = document.getElementById('errorBanner');
+            btn.classList.add('loading');
+            btn.disabled = true;
+            errorBanner.classList.remove('show');
+
+            try {
+                const url = DATA_URL + '?t=' + Date.now();
+                const response = await fetch(url, { cache: 'no-store' });
+                if (!response.ok) throw new Error('Failed to fetch: ' + response.status);
+                const data = await response.json();
+                localStorage.setItem('actionCenterData', JSON.stringify(data));
+                renderData(data);
+            } catch (error) {
+                console.error('Refresh error:', error);
+                errorBanner.textContent = 'Refresh failed: ' + error.message;
+                errorBanner.classList.add('show');
+            } finally {
+                btn.classList.remove('loading');
+                btn.disabled = false;
+            }
+        }
+
+        function renderData(data) {
+            document.getElementById('emailCount').textContent = data.email_count || data.emails?.length || 0;
+            document.getElementById('teamsCount').textContent = data.teams_count || 0;
+            document.getElementById('calendarCount').textContent = data.calendar_count || data.calendar?.length || 0;
+            if (data.updated_at) {
+                const date = new Date(data.updated_at);
+                document.getElementById('lastUpdated').textContent = 'Updated: ' + date.toLocaleString();
+            }
+            document.getElementById('calendarDate').textContent = new Date().toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+            document.getElementById('standupDate').textContent = new Date().toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+            renderCalendar(data.calendar || []);
+            renderEmails(data.emails || []);
+            renderTeams(data.teams || {});
+            renderYesterday(data.yesterday || {});
+        }
+
+        function renderYesterday(yesterday) {
+            const container = document.getElementById('yesterdayList');
+            const items = [];
+            const meetings = yesterday.meetings || [];
+            meetings.forEach(m => {
+                const time = m.isAllDay ? 'All day' : formatTime(m.start);
+                items.push({ text: m.subject, meta: time, type: 'meeting' });
+            });
+            const emails = yesterday.emails_sent || [];
+            emails.forEach(e => {
+                items.push({ text: `Emailed ${e.to}: ${e.subject}`, meta: 'Sent', type: 'email' });
+            });
+            const teams = yesterday.teams_sent || [];
+            teams.forEach(t => {
+                const content = stripHtml(t.content).substring(0, 60);
+                items.push({ text: `${t.chat}: ${content}${content.length >= 60 ? '...' : ''}`, meta: 'Teams', type: 'teams' });
+            });
+            if (items.length === 0) {
+                container.innerHTML = '<li style="color: #999;">No activity found</li>';
+                return;
+            }
+            container.innerHTML = items.map(item =>
+                `<li>${escapeHtml(item.text)}<span class="meta">${escapeHtml(item.meta)}</span></li>`
+            ).join('');
+        }
+
+        function formatTime(dateStr) {
+            if (!dateStr) return '';
+            const date = new Date(dateStr);
+            return date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+        }
+
+        function loadTodayItems() {
+            const items = JSON.parse(localStorage.getItem(TODAY_KEY) || '[]');
+            renderTodayItems(items);
+        }
+
+        function saveTodayItems(items) {
+            localStorage.setItem(TODAY_KEY, JSON.stringify(items));
+            renderTodayItems(items);
+        }
+
+        function renderTodayItems(items) {
+            const container = document.getElementById('todayList');
+            if (items.length === 0) {
+                container.innerHTML = '<li style="color: #999;">Add your tasks for today</li>';
+                return;
+            }
+            container.innerHTML = items.map((item, i) =>
+                `<li class="editable">${escapeHtml(item)}<button class="delete-btn" onclick="deleteTodayItem(${i})">&times;</button></li>`
+            ).join('');
+        }
+
+        function addTodayItem() {
+            const input = document.getElementById('todayInput');
+            const text = input.value.trim();
+            if (!text) return;
+            const items = JSON.parse(localStorage.getItem(TODAY_KEY) || '[]');
+            items.push(text);
+            saveTodayItems(items);
+            input.value = '';
+            input.focus();
+        }
+
+        function deleteTodayItem(index) {
+            const items = JSON.parse(localStorage.getItem(TODAY_KEY) || '[]');
+            items.splice(index, 1);
+            saveTodayItems(items);
+        }
+
+        function renderCalendar(events) {
+            const container = document.getElementById('calendarList');
+            if (!events.length) { container.innerHTML = '<div class="empty-state">No events today</div>'; return; }
+            const sorted = events.sort((a, b) => new Date(a.start) - new Date(b.start));
+            container.innerHTML = sorted.map(event => {
+                const start = new Date(event.start);
+                const end = new Date(event.end);
+                const timeStr = event.isAllDay ? 'All Day' : start.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }) + ' - ' + end.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+                return `<div class="item"><a href="${event.webLink || '#'}" target="_blank">${escapeHtml(event.subject)}</a><div class="sub"><span class="time">${timeStr}</span>${event.location ? ' - ' + escapeHtml(event.location) : ''}</div></div>`;
+            }).join('');
+        }
+
+        function renderEmails(emails) {
+            const container = document.getElementById('emailList');
+            if (!emails.length) { container.innerHTML = '<div class="empty-state">No recent emails</div>'; return; }
+            container.innerHTML = emails.slice(0, 15).map(email => {
+                const date = new Date(email.receivedDateTime);
+                const dateStr = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+                const unread = email.isRead === false ? 'unread' : '';
+                return `<div class="item ${unread}"><a href="${email.webLink || 'https://outlook.office365.com/mail/inbox'}" target="_blank">${escapeHtml(email.subject || '(No subject)')}</a><div class="sub"><span class="from">${escapeHtml(email.from || 'Unknown')}</span> <span class="time">${dateStr}</span></div></div>`;
+            }).join('');
+        }
+
+        function renderTeams(teams) {
+            const container = document.getElementById('teamsList');
+            const sections = [];
+            for (const [key, chat] of Object.entries(teams)) {
+                if (chat.messages && chat.messages.length > 0) {
+                    sections.push(`<div class="section-label">${escapeHtml(chat.name)}</div>`);
+                    chat.messages.slice(0, 5).forEach(msg => {
+                        const date = new Date(msg.createdDateTime);
+                        const dateStr = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+                        const content = stripHtml(msg.content).substring(0, 80);
+                        sections.push(`<div class="item"><div><span class="from">${escapeHtml(msg.from)}</span></div><div class="sub">${escapeHtml(content)}${content.length >= 80 ? '...' : ''} <span class="time">${dateStr}</span></div></div>`);
+                    });
+                }
+            }
+            container.innerHTML = sections.length ? sections.join('') : '<div class="empty-state">No recent Teams messages</div>';
+        }
+
+        function escapeHtml(text) { if (!text) return ''; const div = document.createElement('div'); div.textContent = text; return div.innerHTML; }
+        function stripHtml(html) { if (!html) return ''; const div = document.createElement('div'); div.innerHTML = html; return div.textContent || div.innerText || ''; }
+
+        if ('serviceWorker' in navigator) { navigator.serviceWorker.register('/sw.js').catch(err => console.log('SW failed:', err)); }
+    </script>
+</body>
+</html>
