@@ -153,6 +153,8 @@
                         <input type="text" class="standup-input" id="todayInput" placeholder="Add a task for today..." onkeypress="if(event.key==='Enter')addTodayItem()">
                         <button class="add-btn" onclick="addTodayItem()">Add</button>
                     </div>
+                    <h3 style="margin-top: 20px;">Follow-ups</h3>
+                    <ul class="standup-list" id="followupsList"></ul>
                 </div>
             </div>
         </div>
@@ -345,50 +347,71 @@
         }
 
         // Standup Management - handles cross-device sync via GitHub
+        let currentStandup = null;
+
         function loadAndRenderStandup(serverStandup) {
             const today = getTodayStr();
             let localStandup = JSON.parse(localStorage.getItem(STANDUP_KEY) || '{}');
 
-            // Merge server and local standup
-            let standup = mergeStandup(serverStandup, localStandup, today);
+            // Server standup is the source of truth when for_date matches today
+            const serverDate = serverStandup.for_date || '';
+            const localDate = localStandup.for_date || localStandup.date || '';
 
-            // Save merged state back to localStorage
+            // Merge logic: prefer server data, overlay local edits for today's items
+            let standup;
+            if (serverDate === today) {
+                // Server has today's standup - use it as base, merge local completion state
+                standup = {
+                    for_date: today,
+                    yesterday: serverStandup.yesterday || [],
+                    today: mergeItems(serverStandup.today || [], localStandup.today || [], localDate === today),
+                    followups: mergeItems(serverStandup.followups || [], localStandup.followups || [], localDate === today),
+                    generated_at: serverStandup.generated_at
+                };
+            } else if (localDate === today) {
+                // No server standup for today but local has today's data - day rollover needed
+                standup = {
+                    for_date: today,
+                    yesterday: localStandup.today || [],
+                    today: [],
+                    followups: localStandup.followups || []
+                };
+                console.log('Day rollover - moved local today to yesterday');
+            } else {
+                // Neither has today - start fresh with server's last known state
+                standup = {
+                    for_date: today,
+                    yesterday: serverStandup.yesterday || [],
+                    today: serverStandup.today || [],
+                    followups: serverStandup.followups || []
+                };
+            }
+
+            currentStandup = standup;
             localStorage.setItem(STANDUP_KEY, JSON.stringify(standup));
 
             renderYesterday(standup.yesterday || []);
             renderTodayItems(standup.today || []);
+            renderFollowups(standup.followups || []);
         }
 
-        function mergeStandup(server, local, today) {
-            // Server data is source of truth for yesterday
-            // Local edits to today take precedence if dates match
+        // Merge items, keeping local completion state if same day
+        function mergeItems(serverItems, localItems, sameDay) {
+            if (!sameDay || !localItems.length) return serverItems;
 
-            let yesterday = [];
-            let todayItems = [];
+            const localMap = {};
+            localItems.forEach(item => {
+                const id = typeof item === 'object' ? item.id : null;
+                if (id) localMap[id] = item;
+            });
 
-            // Check if local data exists and handle date rollover
-            if (local.date && local.date !== today) {
-                // Day changed - local today becomes yesterday
-                yesterday = local.today || [];
-                todayItems = [];
-                console.log('Day changed - rolled over items to yesterday');
-            } else if (local.date === today) {
-                // Same day - use local today items (user edits)
-                todayItems = local.today || [];
-                // Use server yesterday (synced from Claude)
-                yesterday = server.yesterday || local.yesterday || [];
-            } else {
-                // No local data - use server
-                yesterday = server.yesterday || [];
-                todayItems = server.today || [];
-            }
-
-            return {
-                date: today,
-                yesterday: yesterday,
-                today: todayItems,
-                lastUpdated: new Date().toISOString()
-            };
+            return serverItems.map(item => {
+                const id = typeof item === 'object' ? item.id : null;
+                if (id && localMap[id]) {
+                    return { ...item, completed: localMap[id].completed };
+                }
+                return item;
+            });
         }
 
         function renderYesterday(items) {
@@ -398,9 +421,10 @@
                 return;
             }
             container.innerHTML = items.map(item => {
-                const text = typeof item === 'string' ? item : item.text || item.subject || JSON.stringify(item);
-                const meta = typeof item === 'object' && item.meta ? `<span class="meta">${escapeHtml(item.meta)}</span>` : '';
-                return `<li>${escapeHtml(text)}${meta}</li>`;
+                const text = typeof item === 'string' ? item : item.text || item.subject || '';
+                const completed = typeof item === 'object' && item.completed;
+                const style = completed ? 'text-decoration: line-through; color: #999;' : '';
+                return `<li style="${style}">${escapeHtml(text)}</li>`;
             }).join('');
         }
 
@@ -411,11 +435,12 @@
         }
 
         function getStandup() {
-            return JSON.parse(localStorage.getItem(STANDUP_KEY) || '{"date":"","yesterday":[],"today":[]}');
+            return currentStandup || JSON.parse(localStorage.getItem(STANDUP_KEY) || '{"for_date":"","yesterday":[],"today":[],"followups":[]}');
         }
 
         function saveStandup(standup) {
             standup.lastUpdated = new Date().toISOString();
+            currentStandup = standup;
             localStorage.setItem(STANDUP_KEY, JSON.stringify(standup));
         }
 
@@ -425,9 +450,63 @@
                 container.innerHTML = '<li style="color: #999;">Add your tasks for today</li>';
                 return;
             }
-            container.innerHTML = items.map((item, i) =>
-                `<li class="editable">${escapeHtml(item)}<button class="delete-btn" onclick="deleteTodayItem(${i})">&times;</button></li>`
-            ).join('');
+            container.innerHTML = items.map((item, i) => {
+                const text = typeof item === 'string' ? item : item.text || '';
+                const completed = typeof item === 'object' && item.completed;
+                const checkedAttr = completed ? 'checked' : '';
+                const style = completed ? 'text-decoration: line-through; color: #999;' : '';
+                return `<li class="editable" style="${style}">
+                    <input type="checkbox" ${checkedAttr} onchange="toggleTodayItem(${i})" style="margin-right: 8px;">
+                    ${escapeHtml(text)}
+                    <button class="delete-btn" onclick="deleteTodayItem(${i})">&times;</button>
+                </li>`;
+            }).join('');
+        }
+
+        function renderFollowups(items) {
+            const container = document.getElementById('followupsList');
+            if (!items || items.length === 0) {
+                container.innerHTML = '<li style="color: #999;">No follow-ups</li>';
+                return;
+            }
+            container.innerHTML = items.map((item, i) => {
+                const text = typeof item === 'string' ? item : item.text || '';
+                const completed = typeof item === 'object' && item.completed;
+                const checkedAttr = completed ? 'checked' : '';
+                const style = completed ? 'text-decoration: line-through; color: #999;' : '';
+                return `<li class="editable" style="${style}">
+                    <input type="checkbox" ${checkedAttr} onchange="toggleFollowup(${i})" style="margin-right: 8px;">
+                    ${escapeHtml(text)}
+                </li>`;
+            }).join('');
+        }
+
+        function toggleTodayItem(index) {
+            const standup = getStandup();
+            if (standup.today && standup.today[index]) {
+                const item = standup.today[index];
+                if (typeof item === 'object') {
+                    item.completed = !item.completed;
+                } else {
+                    standup.today[index] = { id: 't' + index, text: item, completed: true };
+                }
+                saveStandup(standup);
+                renderTodayItems(standup.today);
+            }
+        }
+
+        function toggleFollowup(index) {
+            const standup = getStandup();
+            if (standup.followups && standup.followups[index]) {
+                const item = standup.followups[index];
+                if (typeof item === 'object') {
+                    item.completed = !item.completed;
+                } else {
+                    standup.followups[index] = { id: 'f' + index, text: item, completed: true };
+                }
+                saveStandup(standup);
+                renderFollowups(standup.followups);
+            }
         }
 
         function addTodayItem() {
@@ -436,9 +515,10 @@
             if (!text) return;
 
             const standup = getStandup();
-            standup.date = getTodayStr();
+            standup.for_date = getTodayStr();
             standup.today = standup.today || [];
-            standup.today.push(text);
+            const newId = 't' + Date.now();
+            standup.today.push({ id: newId, text: text, completed: false });
             saveStandup(standup);
             renderTodayItems(standup.today);
 
