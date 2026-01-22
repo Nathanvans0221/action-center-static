@@ -276,7 +276,12 @@
 
     <script>
         const DATA_URL = 'https://raw.githubusercontent.com/Nathanvans0221/action-center-data/main/data.json';
-        const TODAY_KEY = 'standupToday_' + new Date().toISOString().split('T')[0];
+        const STANDUP_KEY = 'actionCenter_standup';
+
+        // Get today's date in YYYY-MM-DD format
+        function getTodayStr() {
+            return new Date().toISOString().split('T')[0];
+        }
 
         function switchTab(tabName) {
             document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
@@ -294,7 +299,6 @@
             if (cached) {
                 try { renderData(JSON.parse(cached)); } catch(e) {}
             }
-            loadTodayItems();
             refreshData();
         });
 
@@ -335,33 +339,69 @@
             renderCalendar(data.calendar || []);
             renderEmails(data.emails || []);
             renderTeams(data.teams || {});
-            renderYesterday(data.yesterday || {});
+
+            // Load and render standup with date rollover
+            loadAndRenderStandup(data.standup || {});
         }
 
-        function renderYesterday(yesterday) {
+        // Standup Management - handles cross-device sync via GitHub
+        function loadAndRenderStandup(serverStandup) {
+            const today = getTodayStr();
+            let localStandup = JSON.parse(localStorage.getItem(STANDUP_KEY) || '{}');
+
+            // Merge server and local standup
+            let standup = mergeStandup(serverStandup, localStandup, today);
+
+            // Save merged state back to localStorage
+            localStorage.setItem(STANDUP_KEY, JSON.stringify(standup));
+
+            renderYesterday(standup.yesterday || []);
+            renderTodayItems(standup.today || []);
+        }
+
+        function mergeStandup(server, local, today) {
+            // Server data is source of truth for yesterday
+            // Local edits to today take precedence if dates match
+
+            let yesterday = [];
+            let todayItems = [];
+
+            // Check if local data exists and handle date rollover
+            if (local.date && local.date !== today) {
+                // Day changed - local today becomes yesterday
+                yesterday = local.today || [];
+                todayItems = [];
+                console.log('Day changed - rolled over items to yesterday');
+            } else if (local.date === today) {
+                // Same day - use local today items (user edits)
+                todayItems = local.today || [];
+                // Use server yesterday (synced from Claude)
+                yesterday = server.yesterday || local.yesterday || [];
+            } else {
+                // No local data - use server
+                yesterday = server.yesterday || [];
+                todayItems = server.today || [];
+            }
+
+            return {
+                date: today,
+                yesterday: yesterday,
+                today: todayItems,
+                lastUpdated: new Date().toISOString()
+            };
+        }
+
+        function renderYesterday(items) {
             const container = document.getElementById('yesterdayList');
-            const items = [];
-            const meetings = yesterday.meetings || [];
-            meetings.forEach(m => {
-                const time = m.isAllDay ? 'All day' : formatTime(m.start);
-                items.push({ text: m.subject, meta: time, type: 'meeting' });
-            });
-            const emails = yesterday.emails_sent || [];
-            emails.forEach(e => {
-                items.push({ text: `Emailed ${e.to}: ${e.subject}`, meta: 'Sent', type: 'email' });
-            });
-            const teams = yesterday.teams_sent || [];
-            teams.forEach(t => {
-                const content = stripHtml(t.content).substring(0, 60);
-                items.push({ text: `${t.chat}: ${content}${content.length >= 60 ? '...' : ''}`, meta: 'Teams', type: 'teams' });
-            });
-            if (items.length === 0) {
-                container.innerHTML = '<li style="color: #999;">No activity found</li>';
+            if (!items || items.length === 0) {
+                container.innerHTML = '<li style="color: #999;">No items from yesterday</li>';
                 return;
             }
-            container.innerHTML = items.map(item =>
-                `<li>${escapeHtml(item.text)}<span class="meta">${escapeHtml(item.meta)}</span></li>`
-            ).join('');
+            container.innerHTML = items.map(item => {
+                const text = typeof item === 'string' ? item : item.text || item.subject || JSON.stringify(item);
+                const meta = typeof item === 'object' && item.meta ? `<span class="meta">${escapeHtml(item.meta)}</span>` : '';
+                return `<li>${escapeHtml(text)}${meta}</li>`;
+            }).join('');
         }
 
         function formatTime(dateStr) {
@@ -370,19 +410,18 @@
             return date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
         }
 
-        function loadTodayItems() {
-            const items = JSON.parse(localStorage.getItem(TODAY_KEY) || '[]');
-            renderTodayItems(items);
+        function getStandup() {
+            return JSON.parse(localStorage.getItem(STANDUP_KEY) || '{"date":"","yesterday":[],"today":[]}');
         }
 
-        function saveTodayItems(items) {
-            localStorage.setItem(TODAY_KEY, JSON.stringify(items));
-            renderTodayItems(items);
+        function saveStandup(standup) {
+            standup.lastUpdated = new Date().toISOString();
+            localStorage.setItem(STANDUP_KEY, JSON.stringify(standup));
         }
 
         function renderTodayItems(items) {
             const container = document.getElementById('todayList');
-            if (items.length === 0) {
+            if (!items || items.length === 0) {
                 container.innerHTML = '<li style="color: #999;">Add your tasks for today</li>';
                 return;
             }
@@ -395,17 +434,33 @@
             const input = document.getElementById('todayInput');
             const text = input.value.trim();
             if (!text) return;
-            const items = JSON.parse(localStorage.getItem(TODAY_KEY) || '[]');
-            items.push(text);
-            saveTodayItems(items);
+
+            const standup = getStandup();
+            standup.date = getTodayStr();
+            standup.today = standup.today || [];
+            standup.today.push(text);
+            saveStandup(standup);
+            renderTodayItems(standup.today);
+
             input.value = '';
             input.focus();
         }
 
         function deleteTodayItem(index) {
-            const items = JSON.parse(localStorage.getItem(TODAY_KEY) || '[]');
-            items.splice(index, 1);
-            saveTodayItems(items);
+            const standup = getStandup();
+            standup.today = standup.today || [];
+            standup.today.splice(index, 1);
+            saveStandup(standup);
+            renderTodayItems(standup.today);
+        }
+
+        // Export standup for Claude to sync
+        function exportStandup() {
+            const standup = getStandup();
+            const json = JSON.stringify(standup, null, 2);
+            navigator.clipboard.writeText(json).then(() => {
+                alert('Standup copied to clipboard! Share with Claude to sync.');
+            });
         }
 
         function renderCalendar(events) {
